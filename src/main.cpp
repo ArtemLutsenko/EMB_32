@@ -1,20 +1,59 @@
 #include <Arduino.h>
 
-#define LDR_IN 4
-#define LED_OUT 15
+constexpr int LED_OUT_RED = 38;
+constexpr int LED_OUT_BLUE = 40;
 
-#define ADC_MAX 4095.0
-#define U_REF 3100.0
-#define LIGHT_THRESHOLD 1000
+constexpr int INPUT_BOOT_KEY = 0;
+constexpr int INPUT_EXTERNAL_BUTTON = 21;
 
+enum class SpeedMode {
+    SLOW,
+    FAST
+};
 
-void setup() {
-  Serial.begin(115200);
+SpeedMode mode = SpeedMode::FAST;
 
-  pinMode(LDR_IN, INPUT);
-  pinMode(LED_OUT, OUTPUT);
+void slowBlinkMode() {
+    digitalWrite(LED_OUT_RED, HIGH);
+    digitalWrite(LED_OUT_BLUE, LOW);
+    delay(1000);
 
-  analogReadResolution(12);
+    digitalWrite(LED_OUT_RED, LOW);
+    digitalWrite(LED_OUT_BLUE, HIGH);
+    delay(1000);
 }
 
-void loop() {}
+void fastBlinkMode() {
+    digitalWrite(LED_OUT_RED, HIGH);
+    digitalWrite(LED_OUT_BLUE, HIGH);
+    delay(200);
+
+    digitalWrite(LED_OUT_RED, LOW);
+    digitalWrite(LED_OUT_BLUE, LOW);
+    delay(200);
+}
+
+void setup() {
+    pinMode(LED_OUT_RED, OUTPUT);
+    pinMode(LED_OUT_BLUE, OUTPUT);
+
+    pinMode(INPUT_EXTERNAL_BUTTON, INPUT_PULLUP);
+    pinMode(INPUT_BOOT_KEY, INPUT);
+}
+
+void loop() {
+
+    if (digitalRead(INPUT_BOOT_KEY) == LOW) {
+        mode = SpeedMode::SLOW;
+    }
+
+    if (digitalRead(INPUT_EXTERNAL_BUTTON) == LOW) {
+        mode = SpeedMode::FAST;
+    }
+
+    if (mode == SpeedMode::FAST) {
+        fastBlinkMode();
+    } else {
+        slowBlinkMode();
+    }
+}
