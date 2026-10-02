@@ -1,117 +1,52 @@
-// Модуль 2.1 — Embedded C++ на ESP32
-//
-//  * неблокуючий blink через millis() (без delay)
-//  * enum class для стану LED і режиму роботи
-//  * constexpr-конфігурація без магічних чисел (include/config.h)
-//  * кнопка на перериванні: ISR ставить volatile-прапорець,
-//    антидребезг і перемикання режимів — у superloop
-//  * вимірювання часу ітерації loop() зі звітом кожні 1000 ітерацій
-//  * без new/malloc і без контейнерів STL
-
 #include <Arduino.h>
 
-#include "button.h"
-#include "config.h"
-#include "led.h"
-#include "loop_profiler.h"
+#define RELAY_OUT 15
+#define LDR_IN 4
 
-namespace {
+#define SAMPLES 20
+#define LIGHT_THRESHOLD 3000
 
-enum class LedMode : uint8_t { Blink, AlwaysOn, AlwaysOff };
-
-constexpr LedMode nextMode(LedMode mode) {
-    switch (mode) {
-        case LedMode::Blink:     return LedMode::AlwaysOn;
-        case LedMode::AlwaysOn:  return LedMode::AlwaysOff;
-        case LedMode::AlwaysOff: return LedMode::Blink;
-    }
-    return LedMode::Blink;
-}
-
-// Перевірка під час компіляції: цикл режимів замкнений.
-static_assert(nextMode(nextMode(nextMode(LedMode::Blink))) == LedMode::Blink,
-              "Mode cycle must be Blink -> On -> Off -> Blink");
-
-constexpr const char* modeName(LedMode mode) {
-    switch (mode) {
-        case LedMode::Blink:     return "Blink";
-        case LedMode::AlwaysOn:  return "AlwaysOn";
-        case LedMode::AlwaysOff: return "AlwaysOff";
-    }
-    return "?";
-}
-
-// Увесь стан програми — в одному об'єкті, а не в розкиданих глобальних змінних.
-// Об'єкти створюються статично (без heap), розмір відомий під час компіляції.
-class App {
-public:
-    void init() {
-        Serial.begin(config::SerialPort::kBaudRate);
-        led_.init();
-        button_.init();
-        lastToggleMs_ = millis();
-        Serial.printf("Started. Mode: %s\n", modeName(mode_));
-    }
-
-    // Одна ітерація superloop. Кожен крок короткий і ніколи не блокує.
-    void tick() {
-        profiler_.begin();
-
-        const uint32_t nowMs = millis();
-        handleButton(nowMs);
-        updateLed(nowMs);
-
-        profiler_.end();
-    }
-
-private:
-    void handleButton(uint32_t nowMs) {
-        if (!button_.poll(nowMs)) {
-            return;
-        }
-        mode_ = nextMode(mode_);
-        lastToggleMs_ = nowMs;  // блимання після перемикання починається з нового відліку
-        Serial.printf("Button -> mode: %s\n", modeName(mode_));
-    }
-
-    void updateLed(uint32_t nowMs) {
-        switch (mode_) {
-            case LedMode::AlwaysOn:
-                led_.set(LedState::On);
-                break;
-
-            case LedMode::AlwaysOff:
-                led_.set(LedState::Off);
-                break;
-
-            case LedMode::Blink:
-                // Віднімання беззнакових чисел коректне й при переповненні
-                // millis() (~49.7 доби).
-                if (nowMs - lastToggleMs_ >= config::Led::kBlinkIntervalMs) {
-                    lastToggleMs_ += config::Led::kBlinkIntervalMs;
-                    led_.toggle();
-                }
-                break;
-        }
-    }
-
-    Led led_{config::Led::kPin};
-    Button button_{config::Button::kPin, config::Button::kDebounceMs};
-    LoopProfiler profiler_{config::Profiler::kReportEveryIterations};
-    LedMode mode_ = LedMode::Blink;
-    uint32_t lastToggleMs_ = 0;
-};
-
-// Єдиний екземпляр застосунку. Видимий лише в цьому файлі (анонімний namespace),
-// щоб setup() і loop() Arduino мали до нього доступ.
-App app;
-
-}  // namespace
+#define ADC_MAX 4095.0
+#define U_REF 3100.0
 
 void setup() {
-    app.init();
+  Serial.begin(115200);
+
+  pinMode(RELAY_OUT, OUTPUT);
+  pinMode(LDR_IN, INPUT);
+
+  analogReadResolution(12);
+
+  digitalWrite(RELAY_OUT, LOW);
 }
 
 void loop() {
-    app.tick();
+  uint32_t sum = 0;
+
+  for (int i = 0; i < SAMPLES; i++) {
+    sum += analogRead(LDR_IN);
+    delay(2);
+  }
+
+  float raw = sum / (float)SAMPLES;
+  float voltage = raw * U_REF / ADC_MAX;
+
+  bool isDark = raw < LIGHT_THRESHOLD;
+
+  digitalWrite(RELAY_OUT, isDark ? HIGH : LOW);
+
+  Serial.print("RAW: ");
+  Serial.print(raw, 1);
+
+  Serial.print(" | Voltage: ");
+  Serial.print(voltage, 1);
+  Serial.print(" mV");
+
+  Serial.print(" | Light: ");
+  Serial.print(isDark ? "DARK" : "BRIGHT");
+
+  Serial.print(" | GPIO15: ");
+  Serial.println(isDark ? 1 : 0);
+
+  delay(500);
 }
