@@ -1,56 +1,52 @@
-
 #include <Arduino.h>
 
+#define RELAY_OUT 15
 #define LDR_IN 4
-#define LED_OUT 15
+
+#define SAMPLES 20
+#define LIGHT_THRESHOLD 3000
 
 #define ADC_MAX 4095.0
 #define U_REF 3100.0
-#define LIGHT_THRESHOLD 1000
 
 void setup() {
   Serial.begin(115200);
 
+  pinMode(RELAY_OUT, OUTPUT);
   pinMode(LDR_IN, INPUT);
-  pinMode(LED_OUT, OUTPUT);
 
   analogReadResolution(12);
+
+  digitalWrite(RELAY_OUT, LOW);
 }
 
 void loop() {
-  int raw = analogRead(LDR_IN);
+  uint32_t sum = 0;
 
-  float calculatedMv = raw * U_REF / ADC_MAX;
-
-  int measuredMv = analogReadMilliVolts(LDR_IN);
-
-  float error = 0;
-
-  if (measuredMv != 0) {
-    error = abs(calculatedMv - measuredMv)
-            / measuredMv * 100.0;
+  for (int i = 0; i < SAMPLES; i++) {
+    sum += analogRead(LDR_IN);
+    delay(2);
   }
+
+  float raw = sum / (float)SAMPLES;
+  float voltage = raw * U_REF / ADC_MAX;
+
+  bool isDark = raw < LIGHT_THRESHOLD;
+
+  digitalWrite(RELAY_OUT, isDark ? HIGH : LOW);
 
   Serial.print("RAW: ");
-  Serial.print(raw);
+  Serial.print(raw, 1);
 
-  Serial.print(" | Calculated: ");
-  Serial.print(calculatedMv, 2);
+  Serial.print(" | Voltage: ");
+  Serial.print(voltage, 1);
   Serial.print(" mV");
 
-  Serial.print(" | Measured: ");
-  Serial.print(measuredMv);
-  Serial.print(" mV");
+  Serial.print(" | Light: ");
+  Serial.print(isDark ? "DARK" : "BRIGHT");
 
-  Serial.print(" | Error: ");
-  Serial.print(error, 2);
-  Serial.println(" %");
+  Serial.print(" | GPIO15: ");
+  Serial.println(isDark ? 1 : 0);
 
-  if (measuredMv < LIGHT_THRESHOLD) {
-    digitalWrite(LED_OUT, HIGH);
-  } else {
-    digitalWrite(LED_OUT, LOW);
-  }
-
-  delay(100);
+  delay(500);
 }
