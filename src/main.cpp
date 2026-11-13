@@ -7,6 +7,8 @@ struct Config {
   static constexpr uint8_t buttonPin = 17;
   static constexpr uint32_t blinkIntervalMs = 500;
   static constexpr uint32_t debounceMs = 30;
+  static constexpr unsigned long serialBaud = 115200;
+  static constexpr uint32_t reportEveryLoops = 1000;
 };
 
 enum class LedState : uint8_t { Off, On };
@@ -15,13 +17,16 @@ enum class Mode : uint8_t { Blink, AlwaysOn, AlwaysOff };
 class Led {
  public:
   explicit constexpr Led(uint8_t pin) : pin_(pin) {}
+
   void init() {
     pinMode(pin_, OUTPUT);
     set(LedState::Off);
   }
+
   void set(LedState state) {
     digitalWrite(pin_, state == LedState::On ? HIGH : LOW);
   }
+
  private:
   const uint8_t pin_;
 };
@@ -50,16 +55,19 @@ class Application {
   void init() {
     led_.init();
     pinMode(Config::buttonPin, INPUT_PULLUP);
+
     rawLevel_ = digitalRead(Config::buttonPin);
     stableLevel_ = rawLevel_;
     changedAt_ = millis();
     lastToggle_ = changedAt_;
+
     attachInterrupt(Config::buttonPin, buttonISR, CHANGE);
   }
 
   void update() {
     const uint32_t now = millis();
     updateButton(now);
+
     if (mode_ == Mode::Blink &&
         static_cast<uint32_t>(now - lastToggle_) >= Config::blinkIntervalMs) {
       lastToggle_ = now;
@@ -72,16 +80,21 @@ class Application {
   void updateButton(uint32_t now) {
     const bool edgeSeen = takeButtonEvent();
     const int level = digitalRead(Config::buttonPin);
+
     // Restart the settling timer on every observed edge, including bounce.
     // Sampling also catches a level change around ISR installation.
     if (edgeSeen || level != rawLevel_) {
       rawLevel_ = level;
       changedAt_ = now;
     }
+
     if (rawLevel_ != stableLevel_ &&
         static_cast<uint32_t>(now - changedAt_) >= Config::debounceMs) {
       stableLevel_ = rawLevel_;
-      if (stableLevel_ == LOW) nextMode(now);
+
+      if (stableLevel_ == LOW) {
+        nextMode(now);
+      }
     }
   }
 
@@ -91,22 +104,26 @@ class Application {
         mode_ = Mode::AlwaysOn;
         ledState_ = LedState::On;
         break;
+
       case Mode::AlwaysOn:
         mode_ = Mode::AlwaysOff;
         ledState_ = LedState::Off;
         break;
+
       case Mode::AlwaysOff:
         mode_ = Mode::Blink;
         ledState_ = LedState::Off;
         lastToggle_ = now;
         break;
     }
+
     led_.set(ledState_);
   }
 
   Led led_{Config::ledPin};
   LedState ledState_ = LedState::Off;
   Mode mode_ = Mode::Blink;
+
   int rawLevel_ = HIGH;
   int stableLevel_ = HIGH;
   uint32_t changedAt_ = 0;
@@ -118,5 +135,31 @@ Application& app() {
   return instance;
 }
 
-void setup() { app().init(); }
-void loop() { app().update(); }
+void setup() {
+  Serial.begin(Config::serialBaud);
+  app().init();
+}
+
+void loop() {
+  static uint64_t totalUs = 0;
+  static uint32_t samples = 0;
+
+  const uint32_t startedUs = micros();
+  app().update();
+  const uint32_t elapsedUs = static_cast<uint32_t>(micros() - startedUs);
+
+  totalUs += elapsedUs;
+  ++samples;
+
+  if (samples == Config::reportEveryLoops) {
+    const double averageUs = static_cast<double>(totalUs) / samples;
+
+    // Measure application work only, not Serial transmission or statistics.
+    // Serial output can itself block when its transmit buffer fills.
+    Serial.printf("loop work: %lu iterations, avg=%.2f us\n",
+                  static_cast<unsigned long>(samples), averageUs);
+
+    totalUs = 0;
+    samples = 0;
+  }
+}
